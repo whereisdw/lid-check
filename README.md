@@ -26,10 +26,12 @@ curl -fsSL https://raw.githubusercontent.com/whereisdw/lid-check/main/lid_check.
 curl -fsSL https://raw.githubusercontent.com/whereisdw/lid-check/main/lid_check.py | python3 - --days 14 --lid-only
 ```
 
-Options: `--days N` (default 7), `--lid-only`, `--min-minutes N` (ignore short sleeps, default 5), `--json`, `--projects-dir DIR` (default `~/.claude/projects`), `--pmset-log FILE`.
+Options: `--days N` (default 7), `--lid-only`, `--min-minutes N` (ignore short sleeps, default 5), `--json`, `--projects-dir DIR` (default `~/.claude/projects`), `--pmset-log FILE`, `--quiet` (no progress messages; they go to stderr, so the table and `--json` on stdout are unchanged).
 Works with the python3 that ships with macOS (tests pass on 3.9 and 3.15). Bad input (a missing folder or file, `--days 0`) prints one line saying what is wrong.
 
-Timing, measured once on one Mac with a 14 GB `~/.claude/projects` (about 7,700 transcript files): when sleep periods exist, reading the transcripts took about 4 minutes for `--days 7` and about 6.5 minutes for `--days 30` (60,000 and 138,000 requests read). Separately, `pmset -g log` alone took about a minute there. With no sleep period in the window the transcripts are not read at all. These are single runs on one machine, not benchmarks; a smaller folder is much faster. Use `--projects-dir` on a copy of one project to try it quickly.
+Timing, measured once on one busy Mac with a 14 GB `~/.claude/projects` (about 7,700 transcript files, many with multi-MB lines), against a test pmset log with a nightly 8-hour sleep: the transcript scan took 20-30 s for `--days 7` and about 30 s for `--days 30`, down from about 1 to 2 minutes in the first version (run times on that machine varied by a factor of two between runs). With a single sleep period 3 days ago it took about 10 s. Separately, `pmset -g log` alone took 8 s once here and about a minute at another time; macOS builds that log on demand and this tool cannot speed it up. So the first line it prints, on stderr, says it is reading the pmset log. These are single runs on one machine, not benchmarks; a smaller folder is much faster. With no sleep period in the window the transcripts are not read at all. Progress goes to stderr (`--quiet` turns it off), so the table and `--json` on stdout are unchanged. Use `--projects-dir` on a copy of one project to try it quickly.
+
+To stay fast it skips transcript files last modified before the window, files whose first timestamps are more than a day after the last sleep period, and any line timestamped more than 10 minutes away from a sleep period, without parsing them. Transcripts are append-only, so these cannot hold a line inside a period. The numbers are the same as a full read (the tests check that).
 
 ## Example output
 
@@ -98,7 +100,7 @@ The man page does not say whether these cover closing the lid. Run `lid_check.py
 - Reads `~/.claude/projects/**/*.jsonl` for only: the timestamp, the request id, the cache token counts, and whether an entry is an API error.
 - Does not print or store conversation text, project names, file names, or paths.
 - No network calls, no files written, no settings changed, no dependencies. `--json` prints the same numbers.
-- You can verify this: the file is about 330 lines, and `grep -n "import" lid_check.py` shows the only modules it uses.
+- You can verify this: the file is about 420 lines, and `grep -n "import" lid_check.py` shows the only modules it uses.
 
 Tests: `python3 -m unittest discover -s tests`
 

@@ -11,12 +11,15 @@ Prints: times and numbers only. Never prints conversation text, project names, o
   python3 lid_check.py --json
 """
 import argparse
+import bisect
 import glob
+import itertools
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -26,6 +29,7 @@ IDLE_GAP = timedelta(minutes=5)            # prompt-cache lifetime assumed by th
 REWRITE_MIN = 20_000                       # tokens
 AFTER_WAKE = timedelta(minutes=10)         # look this long after wake for a cache rewrite
 CONTEXT = timedelta(days=3)                # extra history read so "previous request" is known
+PAD = timedelta(minutes=10)                # only parse lines this close to a sleep period (needs > the 5 min idle gap)
 
 # One pmset line: "2026-09-18 00:46:05 +0800 Sleep<spaces or tab>Entering Sleep state due to 'Clamshell Sleep':..."
 # Read loosely (one space or a tab after the type, +09:00 or Z zone, leading blanks, quote marker, trailing spaces/CR),
@@ -116,24 +120,103 @@ def darkwake_windows(ev):
     return win
 
 
+# ---------- progress (stderr only; stdout stays the table / JSON) ----------
+class Progress:
+    def __init__(self, quiet):
+        self.quiet, self.tty, self.last, self.t0 = quiet, sys.stderr.isatty(), 0.0, time.monotonic()
+
+    def say(self, msg):
+        if not self.quiet:
+            print(msg, file=sys.stderr, flush=True)
+
+    def tick(self, msg):
+        """Overwrite one line about every 2 s on a terminal; print nothing in between (and nothing when piped)."""
+        now = time.monotonic()
+        if self.quiet or not self.tty or now - self.last < 2:
+            return
+        self.last = now
+        print("\r  " + msg + "   ", end="", file=sys.stderr, flush=True)
+
+    def done(self, msg):
+        if self.tty and not self.quiet:
+            print("\r" + " " * 70 + "\r", end="", file=sys.stderr)
+        self.say(f"{msg} ({time.monotonic() - self.t0:.0f}s)")
+
+
 # ---------- Claude Code transcripts ----------
-def claude_requests(root, since, until):
-    """-> (requests, errors). Reads only timestamp, requestId, usage numbers, error markers."""
+# Cheap checks on the raw line, so most lines (often MBs of message text) are never json-parsed.
+# Every check only ever decides "skip"; it keeps a line whenever it is unsure, so results match a full parse.
+# Lines are read as bytes (no UTF-8 decoding of the lines we skip); only a line that is parsed is decoded.
+ASSISTANT_RE = re.compile(rb'"type"\s*:\s*"assistant"')
+TS_VALUE_RE = re.compile(rb'"timestamp"\s*:\s*"([^"]*)"')   # all matches: a nested "timestamp" key may also match
+
+
+def _utc_key(t):
+    return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def claude_requests(root, since, until, spans=None, progress=None):
+    """-> (requests, errors). Reads only timestamp, requestId, usage numbers, error markers.
+    spans: [(start, end)] sleep periods. When given, only lines timestamped within PAD of a period
+    (+ AFTER_WAKE) are parsed; the numbers in the table are the same as with spans=None (see below)."""
     reqs, errors = {}, []
+    lo_win, hi_win = _utc_key(since - CONTEXT), _utc_key(until)
     cutoff = (since - CONTEXT).timestamp()
+    los = his = None
+    if spans:
+        rng = sorted((_utc_key(a - PAD - timedelta(seconds=1)), _utc_key(b + AFTER_WAKE + PAD + timedelta(seconds=1)))
+                     for a, b in spans)
+        los, his = [r[0] for r in rng], [r[1] for r in rng]
+        his = [max(his[:i + 1]) for i in range(len(his))]    # running max: periods may overlap after sorting
+        # Transcripts are append-only, so a file last modified before the earliest period (minus a day of slack
+        # for clock skew) has no line inside any period and is never opened.
+        cutoff = max(cutoff, (min(a for a, _ in spans) - PAD - timedelta(days=1)).timestamp())
+        # Likewise a file whose first timestamps are over a day after the last period ended starts too late.
+        starts_too_late = _utc_key(max(b for _, b in spans) + AFTER_WAKE + PAD + timedelta(days=1))
+    files = []
     for f in glob.iglob(os.path.join(root, "**", "*.jsonl"), recursive=True):
         try:
-            if os.path.getmtime(f) < cutoff:
-                continue
-            fh = open(f, errors="ignore")
+            if os.path.getmtime(f) >= cutoff:
+                files.append(f)
         except OSError:
             continue
+    if progress:
+        progress.say(f"Scanning {len(files):,} transcript file(s) for requests (a large ~/.claude can take minutes)...")
+    for n, f in enumerate(files, 1):
+        if progress:
+            progress.tick(f"scanned {n - 1:,}/{len(files):,} files")
+        try:
+            fh = open(f, "rb")
+        except OSError:
+            continue
+        if los is not None:
+            first = [k for ln in itertools.islice(fh, 20) for v in TS_VALUE_RE.findall(ln)
+                     for k in [v.decode("ascii", "replace")[:19]] if len(v) >= 20 and v[-1:] == b"Z"]
+            if first and min(first) > starts_too_late:
+                fh.close()
+                continue
+            fh.seek(0)
+        ghost = None    # earliest skipped request of this file that is inside the window but outside every span
         with fh:
             for line in fh:
-                if "assistant" not in line and "api_error" not in line:
+                if b"assistant" not in line and b"api_error" not in line:
                     continue
+                if los is not None:
+                    vals = TS_VALUE_RE.findall(line)
+                    vals = [v.decode("ascii", "replace") for v in vals]
+                    keys = [v[:19] for v in vals if len(v) >= 20 and v[10] == "T" and v[-1] == "Z"]
+                    if vals and len(keys) == len(vals):         # parse anyway when any timestamp looks unusual
+                        i = [bisect.bisect_right(los, k) - 1 for k in keys]
+                        if not any(j >= 0 and k <= his[j] for j, k in zip(i, keys)):
+                            # Outside every period. It still tells the first-request-of-a-file rule that an
+                            # earlier request exists, so remember the earliest one (in the window, a real request).
+                            inw = [k for k in keys if lo_win <= k <= hi_win]
+                            if inw and (ghost is None or min(inw) < ghost) and ASSISTANT_RE.search(line) \
+                                    and b"isApiErrorMessage" not in line:
+                                ghost = min(inw)
+                            continue
                 try:
-                    d = json.loads(line)
+                    d = json.loads(line.decode("utf-8", "ignore"))
                 except ValueError:
                     continue
                 if not isinstance(d, dict) or not d.get("timestamp"):
@@ -161,6 +244,12 @@ def claude_requests(root, since, until):
                 r["t"] = min(r["t"], t)
                 r["cw"] = max(r["cw"], u.get("cache_creation_input_tokens") or 0)
                 r["cr"] = max(r["cr"], u.get("cache_read_input_tokens") or 0)
+        if ghost:
+            # A stand-in for the skipped requests, so the first parsed request of this file is not mistaken for
+            # the file's first. It lies > PAD from every period, so it is never counted or a 5-minute neighbour.
+            reqs[("ghost", f)] = {"t": iso(ghost + "Z"), "chain": f, "cw": 0, "cr": 0}
+    if progress:
+        progress.done(f"Scanned {len(files):,} file(s)")
     return list(reqs.values()), errors
 
 
@@ -247,6 +336,7 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true", help="print JSON instead of a table")
     ap.add_argument("--projects-dir", default=os.path.join(os.path.expanduser("~"), ".claude", "projects"),
                     help="Claude Code transcript folder (default ~/.claude/projects)")
+    ap.add_argument("-q", "--quiet", action="store_true", help="no progress messages on stderr")
     ap.add_argument("--pmset-log", help="read this saved `pmset -g log` text file instead of running pmset")
     a = ap.parse_args(argv)
     if not a.days > 0:
@@ -254,6 +344,7 @@ def main(argv=None):
     if a.min_minutes < 0:
         ap.error("--min-minutes must be 0 or more")
 
+    prog = Progress(a.quiet)
     now = datetime.now(UTC)
     since = now - timedelta(days=a.days)
 
@@ -265,7 +356,9 @@ def main(argv=None):
             print(f"lid-check: cannot read --pmset-log file: {e.strerror or e}", file=sys.stderr)
             return 1
     else:
+        prog.say("Reading the pmset log... (macOS builds it on demand; it can take a minute)")
         text = run(["pmset", "-g", "log"])
+        prog.done("Read the pmset log")
     ev, log_first = parse_power_events(text)
     if log_first is None:
         print("lid-check: no pmset log lines found. `pmset -g log` printed nothing readable "
@@ -285,7 +378,7 @@ def main(argv=None):
         return 1
     if periods:
         first = min(p["start"] for p in periods)
-        reqs, errors = claude_requests(a.projects_dir, first, now)
+        reqs, errors = claude_requests(a.projects_dir, first, now, [(p["start"], p["end"]) for p in periods], prog)
     else:
         reqs, errors = [], []
     mark_rewrites(reqs)
