@@ -1,0 +1,97 @@
+# Real `pmset -g log` lines copied verbatim from public GitHub issues (read with `gh issue view`, 2026-11-12).
+# Nothing here is typed in by hand: each line is the issue text unchanged, except where a block header says otherwise.
+# Whitespace is kept as published. Where the issue shows spaces instead of the original tab, the block header says so.
+# Lines are grouped in blocks: `# === <id> | <url> | <note>` then the lines. Blank lines separate blocks.
+# Several reporters run hackintosh/PC hardware; those blocks are marked. No lines from a Mac in a lid-closed, truly asleep
+# state are available from a Mac the maintainer owns (their Macs log 0 Sleep lines).
+
+# === openlogi-clamshell | https://github.com/AprilNEA/OpenLogi/issues/1281 | Sept 2026 report, Apple Silicon-style [CDNVA]/[CDNP] tags; shown with spaces (no tab characters in the issue text); first block of two in the issue
+2026-09-08 15:08:41 -0600 Notification   Display is turned off
+2026-09-08 15:08:46 -0600 Sleep          Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active
+2026-09-08 15:18:34 -0600 Wake           Wake from Deep Idle [CDNVA] : due to smc.sysState.Wake(0x70070000) lid SMC.OutboxNotEmpty RTP.multi-touch/HID Activity
+2026-09-08 15:18:34 -0600 Notification   Display is turned on
+
+# === openlogi-overnight | https://github.com/AprilNEA/OpenLogi/issues/1281 | same issue, second block; the author removed the overnight cycles between the last DarkWake and the final Wake, so the lines are NOT contiguous; spaces not tabs
+2026-09-18 00:46:00 +0800 Notification  Display is turned off
+2026-09-18 00:46:05 +0800 Sleep         Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active
+2026-09-18 00:46:09 +0800 DarkWake      DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt
+2026-09-18 00:46:54 +0800 Sleep         Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active
+2026-09-18 00:47:04 +0800 DarkWake      DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt
+2026-09-18 09:01:28 +0800 Wake          DarkWake to FullWake from Deep Idle [CDNVA] : due to UserActivity Assertion
+2026-09-18 09:01:28 +0800 Notification  Display is turned on
+
+# === kinlace-maintenance | https://github.com/kinlace/parent-recap/issues/832 | Nov 2026 MacBook on battery; shown with spaces (no tab characters); Sleep line carries a 1048 secs tail
+2026-11-06 19:55:00 +0200 DarkWake  DarkWake from Deep Idle [CDNP] : due to NUB.SPMI0.SW3 nub-spmi0.0x02 rtc/ Using BATT (Charge:88%) 16 secs
+2026-11-06 19:55:16 +0200 Sleep     Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active Using Batt (Charge:88%) 1048 secs
+
+# === superbot2-darkwake-ac | https://github.com/gkkirsch/superbot2/issues/15 | Apr 2026, original tab after the type kept; DarkWake with a 135 secs tail on AC
+2026-04-12 06:10:31 -0600 DarkWake            	DarkWake from Deep Idle [CDNPB] : due to NUB.SPMISw3IRQ nub-spmi0.0x02 rtc/Maintenance Using AC (Charge:100%) 135 secs
+
+# === batteryoptimizer-sleepservice | https://github.com/js4jiang5/BatteryOptimizer_for_Mac/issues/4 | Oct 2024; original tab after the type kept; trailing spaces kept; Maintenance Sleep + Sleep Service Back to Sleep + Wake due to lid
+2024-10-29 01:14:06 +0800 Sleep               	Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active Using AC (Charge:80%) 361 secs  
+2024-10-29 01:20:52 +0800 Sleep               	Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active Using AC (Charge:80%) 125 secs  
+2024-10-29 01:23:42 +0800 Sleep               	Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active Using AC (Charge:80%) 992 secs  
+2024-10-29 01:41:15 +0800 Sleep               	Entering Sleep state due to 'Sleep Service Back to Sleep':TCPKeepAlive=active Using AC (Charge:80%) 50 secs   
+2024-10-29 01:42:05 +0800 Wake                	Wake from Deep Idle [CDNVA] : due to SMC.OutboxNotEmpty smc.70070000 lid/UserActivity Assertion Using AC (Charge:80%)
+
+# === batfi-usbc-chime | https://github.com/rurza/BatFi/issues/119 | Jun 2025 Apple Silicon; tabs kept; includes WakeDetails/Assertions lines (must be ignored) and 'Entering DarkWake state' after a full wake
+2025-06-27 07:48:48 +0800 DarkWake            	DarkWake from Deep Idle [CDNPB] : due to smc.70070000 USB-C_plug SMC.OutboxNotEmpty nub-spmi-a0.0x3F/ Using AC (Charge:50%) 3 secs    
+2025-06-27 07:48:48 +0800 WakeDetails         	DriverReason:smc.70070000 - DriverDetails:                                 
+2025-06-27 07:48:49 +0800 Assertions          	Summary- [System: PushSrvc SRPrevSleep IPushSrvc kCPU] Using AC(Charge: 51) 
+2025-06-27 07:48:51 +0800 Assertions          	PID 828(PowerChime) Created DisplayWake "com.apple.chimeOnAttach" 00:00:00  id:0x0xe0000861c [System: SRPrevSleep DispWake IPushSrvc kCPU]          
+2025-06-27 07:48:51 +0800 Wake                	DarkWake to FullWake from Deep Idle [CDNVAPB] : due to Notification Using AC (Charge:51%) 1 secs    
+2025-06-27 07:48:51 +0800 WakeDetails         	DriverReason:smc.70070000 - DriverDetails:                                 
+2025-06-27 07:48:52 +0800 Assertions          	PID 828(PowerChime) Released DisplayWake "com.apple.chimeOnAttach" 00:00:01  id:0x0xe0000861c [System: PrevIdle PrevSleep SRPrevSleep IPushSrvc kCPU]          
+2025-06-27 07:48:52 +0800 Sleep               	Entering DarkWake state due to 'Notification Wake Back to Sleep':TCPKeepAlive=active Using AC (Charge:51%)
+
+# === kint-fullwake-2022 | https://github.com/kinx-project/kint/issues/59 | Aug 2022 MacBook; GitHub stored this comment with CRLF, the CR characters are removed here; includes WakeDetails/HibernateStats/WakeTime lines
+2022-08-29 09:05:52 -0400 Wake                  DarkWake to FullWake from Deep Idle [CDNVA] : due to UserActivity Assertion Using AC (Charge:100%)
+2022-08-29 09:05:52 -0400 WakeDetails           DriverReason:NUB.SPMISw3IRQ - DriverDetails:
+2022-08-29 09:05:52 -0400 HibernateStats        hibmode=3 standbydelaylow=0 standbydelayhigh=0                                            11402
+2022-08-29 09:05:52 -0400 WakeTime              WakeTime: 0.016 sec
+2022-08-29 09:25:14 -0400 Wake                  Wake from Deep Idle [CDNVA] : due to SMC.OutboxNotEmpty smc.70070000 wifibt bluetooth-pcie/UserActivity Assertion Using AC (Charge:100%) 1 secs
+
+# === nalin-clamshell-battery | https://github.com/nalin/thewebsite/issues/238 | Sept 2026; two Clamshell Sleep lines 31 s apart, the second with a 910 secs tail; spaces not tabs
+2026-09-10 14:11:48 -0700  Sleep  Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%)
+2026-09-10 14:12:19 -0700  Sleep  Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 910 secs
+
+# === gregertw-hibernate-2021 | https://github.com/gregertw/mac-osx-hibernation-scripts/issues/1 | Jan 2021 Intel MacBook; 'Wake from Hibernate' wording; space before tail
+2021-01-27 19:34:17 +0100 Sleep               	Entering Sleep state due to 'Clamshell Sleep': Using Batt (Charge:92%) 266 secs  
+2021-01-27 19:38:43 +0100 Wake                	Wake from Hibernate [CDNVA] : due to EC.LidOpen/Lid Open Using BATT (Charge:92%)  
+
+# === rigger-darkwake-run | https://github.com/williacj/rigger/issues/951 | Oct 2026 AC-powered Mac; 'Entering DarkWake state due to Idle Sleep' (Sleep column), then repeated DarkWakes; tabs and trailing spaces kept; macOS 'Charge:0%' as shown
+2026-10-25 13:20:22 -0500 Notification        	Display is turned off                                                      	          
+2026-10-25 13:20:22 -0500 Sleep               	Entering DarkWake state due to 'Idle Sleep':TCPKeepAlive=active Using AC (Charge:0%)           
+2026-10-25 13:25:10 -0500 DarkWake            	DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt SMC.OutboxNotEmpty bluetooth-pcie/ Using AC (Charge:0%) 1 secs    
+2026-10-25 13:25:11 -0500 Wake                	DarkWake to FullWake from Deep Idle [CDNVA] : due to HID Activity Using AC (Charge:0%)           
+2026-10-25 13:25:11 -0500 Notification        	Display is turned on                                                       	          
+2026-10-25 14:01:15 -0500 DarkWake            	DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt SMC.OutboxNotEmpty E_RX_IP_PACKET ARPT/ Using AC (Charge:0%) 14 secs   
+2026-10-25 14:02:54 -0500 DarkWake            	DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt SMC.OutboxNotEmpty E_RX_IP_PACKET ARPT/ Using AC (Charge:0%) 10 secs   
+2026-10-25 14:03:07 -0500 DarkWake            	DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt SMC.OutboxNotEmpty E_RX_IP_PACKET ARPT/ Using AC (Charge:0%) 10 secs   
+2026-10-25 14:03:26 -0500 DarkWake            	DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt SMC.OutboxNotEmpty E_RX_IP_PACKET ARPT/ Using AC (Charge:0%) 10 secs   
+2026-10-25 14:50:30 -0500 DarkWake            	DarkWake from Deep Idle [CDNPB] : due to smc.sysState.Wake(0x70070000) wifibt SMC.OutboxNotEmpty E_RX_IP_PACKET ARPT/ Using AC (Charge:0%)           
+2026-10-25 16:03:24 -0500 Wake                	DarkWake to FullWake from Deep Idle [CDNVA] : due to UserActivity Assertion Using AC (Charge:0%)           
+
+# === bigsurface-entering-darkwake-clamshell | https://github.com/Xiashangning/BigSurface/issues/48 | Dec 2022 hackintosh-class report; Sleep column but 'Entering DarkWake state' (36 secs, then DarkWake to FullWake); spaces collapsed to ONE space
+2022-12-06 20:37:48 -0600 Sleep Entering DarkWake state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 36 secs
+2022-12-06 20:38:24 -0600 Wake DarkWake to FullWake from Invalid [CDNVA] : due to UserActivity Assertion Using BATT (Charge:100%)
+
+# === x1c6-entering-darkwake-clamshell | https://github.com/tylernguyen/x1c6-hackintosh/issues/62 | Jul 2020 hackintosh laptop; 'Entering DarkWake state due to Clamshell Sleep' with a 2112 secs tail, then DarkWake to FullWake; tabs kept
+2020-07-08 16:22:02 +0800 Sleep               	Entering DarkWake state due to 'Clamshell Sleep':TCPKeepAlive=disabled Using Batt (Charge:100%) 2112 secs 
+2020-07-08 16:57:14 +0800 Wake                	DarkWake to FullWake from Invalid [CDNVA] : due to UserActivity Assertion Using BATT (Charge:94%)   
+
+# === samsung-software-sleep-darkwake | https://github.com/Samsung/netcoredbg/issues/146 | Nov 2023 Intel desktop; 'Entering DarkWake state due to Software Sleep pid=...' then DarkWake to FullWake 7 s later; tabs kept
+2023-11-16 15:48:04 +0100 Sleep               	Entering DarkWake state due to 'Software Sleep pid=64781': Using AC (Charge:0%) 7 secs    
+2023-11-16 15:48:11 +0100 Wake                	DarkWake to FullWake from Invalid [CDNVA] : due to HID Activity Using AC (Charge:0%)           
+
+# === nvidia-software-sleep | https://github.com/nullmoth/nvidia-macos-driver/issues/48 | Oct 2026 PC running macOS (not a Mac); 'Entering Sleep state due to Software Sleep', DarkWake from Normal Sleep, DarkWake to FullWake
+2026-10-10 21:14:06 +0900 Sleep     Entering Sleep state due to 'Software Sleep pid=399': Using AC (Charge:0%) 10 secs   
+2026-10-10 21:14:16 +0900 DarkWake  DarkWake from Normal Sleep [CDNP] : due to XDCI CNVW/ Using AC (Charge:0%) 10 secs   
+2026-10-10 21:14:26 +0900 Wake      DarkWake to FullWake from Normal Sleep [CDNVA] : due to UserActivity Assertion Using AC (Charge:0%)
+
+# === ocm3800-idle-sleep | https://github.com/adrgumula/oc-m3800/issues/7 | Feb 2022 hackintosh laptop; the only verbatim 'Entering Sleep state due to Idle Sleep' lines found; tabs kept
+2022-02-23 22:04:21 +0800 Sleep               	Entering Sleep state due to 'Idle Sleep': Using AC (Charge:0%) 376 secs
+2022-02-24 18:08:32 +0800 Sleep               	Entering Sleep state due to 'Idle Sleep': Using AC (Charge:0%) 204 secs
+
+# === agl-inline-darkwake | https://github.com/AmericanGroupLLC/agl-monorepo/issues/25 | Oct 2026 MacBook on battery; the issue quotes this line inline in backticks (no type column, so it is NOT in the raw pmset layout; used only to show the time/DarkWake/tail text)
+# 2026-10-29 10:53:08 -0700 DarkWake from Deep Idle [CDNP] : due to NUB.SPMISw3IRQ nub-spmi0.0x02 rtc/SleepService Using BATT (Charge:30%) 3 secs
