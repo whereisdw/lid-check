@@ -91,7 +91,7 @@ class T(unittest.TestCase):
     def test_no_periods_message(self):
         with tempfile.TemporaryDirectory() as d:
             pm = os.path.join(d, "pm.txt")
-            open(pm, "w").write("PM ASL data store: x\n")
+            open(pm, "w").write("PM ASL data store: x\n2026-11-10 22:00:00 +0900 Notification   Display is turned on\n")
             import io, contextlib
             out = io.StringIO()
             with contextlib.redirect_stdout(out):

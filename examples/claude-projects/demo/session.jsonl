@@ -1,0 +1,5 @@
+{"type": "assistant", "timestamp": "2026-09-17T15:30:00Z", "requestId": "req_a", "message": {"id": "req_a", "usage": {"cache_creation_input_tokens": 3000, "cache_read_input_tokens": 0}}}
+{"type": "assistant", "timestamp": "2026-09-17T16:46:30Z", "requestId": "req_b", "message": {"id": "req_b", "usage": {"cache_creation_input_tokens": 500, "cache_read_input_tokens": 60000}}}
+{"type": "assistant", "timestamp": "2026-09-17T19:00:00Z", "requestId": "req_c", "message": {"id": "req_c", "usage": {"cache_creation_input_tokens": 45000, "cache_read_input_tokens": 0}}}
+{"type": "assistant", "timestamp": "2026-09-18T01:01:00Z", "requestId": "req_d", "message": {"id": "req_d", "usage": {"cache_creation_input_tokens": 800, "cache_read_input_tokens": 60000}}}
+{"type": "assistant", "timestamp": "2026-09-18T01:09:00Z", "requestId": "req_e", "message": {"id": "req_e", "usage": {"cache_creation_input_tokens": 42000, "cache_read_input_tokens": 0}}}

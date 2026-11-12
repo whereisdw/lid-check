@@ -234,7 +234,13 @@ def print_table(rows):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Show Claude Code requests recorded during Mac sleep periods. Read-only.")
+    ap = argparse.ArgumentParser(
+        description="List the times your Mac was asleep (from `pmset -g log`) and count the Claude Code requests "
+                    "recorded inside them (from ~/.claude/projects). Read-only: no network, no files written.",
+        epilog="examples:\n  python3 lid_check.py                      last 7 days\n"
+               "  python3 lid_check.py --days 14 --lid-only only sleeps that began with a lid close\n"
+               "  python3 lid_check.py --json                same numbers as JSON",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=float, default=7, help="how many days back to look (default 7)")
     ap.add_argument("--min-minutes", type=float, default=5, help="ignore sleep periods shorter than this (default 5)")
     ap.add_argument("--lid-only", action="store_true", help="only periods that began with a lid-close sleep")
@@ -243,16 +249,29 @@ def main(argv=None):
                     help="Claude Code transcript folder (default ~/.claude/projects)")
     ap.add_argument("--pmset-log", help="read this saved `pmset -g log` text file instead of running pmset")
     a = ap.parse_args(argv)
+    if not a.days > 0:
+        ap.error("--days must be greater than 0 (for example --days 7)")
+    if a.min_minutes < 0:
+        ap.error("--min-minutes must be 0 or more")
 
     now = datetime.now(UTC)
     since = now - timedelta(days=a.days)
 
     if a.pmset_log:
-        with open(a.pmset_log, errors="ignore") as fh:
-            text = fh.read()
+        try:
+            with open(a.pmset_log, errors="ignore") as fh:
+                text = fh.read()
+        except OSError as e:
+            print(f"lid-check: cannot read --pmset-log file: {e.strerror or e}", file=sys.stderr)
+            return 1
     else:
         text = run(["pmset", "-g", "log"])
     ev, log_first = parse_power_events(text)
+    if log_first is None:
+        print("lid-check: no pmset log lines found. `pmset -g log` printed nothing readable "
+              "(this tool needs macOS). To use a saved copy: pmset -g log > pm.txt; "
+              "python3 lid_check.py --pmset-log pm.txt", file=sys.stderr)
+        return 1
 
     periods = [p for p in sleep_periods(ev, now) if p["end"] > since]
     periods = [p for p in periods if (p["end"] - p["start"]) >= timedelta(minutes=a.min_minutes)]
@@ -260,6 +279,10 @@ def main(argv=None):
         periods = [p for p in periods if p["lid_closed"]]
 
     # Only read transcripts when there is a sleep period to look at (they can be many GB).
+    if periods and not os.path.isdir(a.projects_dir):
+        print(f"lid-check: Claude Code folder not found: {a.projects_dir} "
+              "(use --projects-dir if yours is elsewhere)", file=sys.stderr)
+        return 1
     if periods:
         first = min(p["start"] for p in periods)
         reqs, errors = claude_requests(a.projects_dir, first, now)

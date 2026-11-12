@@ -1,0 +1,10 @@
+# Real `pmset -g log` lines, copied verbatim from https://github.com/AprilNEA/OpenLogi/issues/1281 (second block).
+# The issue author removed the overnight cycles between the last DarkWake and the final Wake, so the lines are not contiguous.
+# Spaces, not tabs, as published in the issue. Source block: tests/fixtures/real_pmset_lines.txt (openlogi-overnight).
+2026-09-18 00:46:00 +0800 Notification  Display is turned off
+2026-09-18 00:46:05 +0800 Sleep         Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active
+2026-09-18 00:46:09 +0800 DarkWake      DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt
+2026-09-18 00:46:54 +0800 Sleep         Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active
+2026-09-18 00:47:04 +0800 DarkWake      DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt
+2026-09-18 09:01:28 +0800 Wake          DarkWake to FullWake from Deep Idle [CDNVA] : due to UserActivity Assertion
+2026-09-18 09:01:28 +0800 Notification  Display is turned on
