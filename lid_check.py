@@ -3,12 +3,14 @@
 
 Read-only. Standard library only. No network.
 Reads:  `pmset -g log` (sleep / wake / DarkWake events)
-        ~/.claude/projects/**/*.jsonl (only timestamps, request ids, token counts)
-Prints: times and numbers only. Never prints conversation text, project names, or paths.
+        ~/.claude/projects/**/*.jsonl (only timestamps, ids, model names, token counts)
+Prints: times and numbers only. Never prints conversation text or paths. Project folder names appear only
+        with --usage (home-folder part removed; --redact hides them too).
 
   python3 lid_check.py               # last 7 days
   python3 lid_check.py --days 14
   python3 lid_check.py --json
+  python3 lid_check.py --usage       # token counts per session / subagent
 """
 import argparse
 import bisect
@@ -155,6 +157,19 @@ def _utc_key(t):
     return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _recent_files(root, cutoff):
+    """Transcript files last modified at or after `cutoff` (epoch seconds). Transcripts are append-only,
+    so an older file has no line after the cutoff and is never opened."""
+    files = []
+    for f in glob.iglob(os.path.join(root, "**", "*.jsonl"), recursive=True):
+        try:
+            if os.path.getmtime(f) >= cutoff:
+                files.append(f)
+        except OSError:
+            continue
+    return files
+
+
 def claude_requests(root, since, until, spans=None, progress=None):
     """-> (requests, errors). Reads only timestamp, requestId, usage numbers, error markers.
     spans: [(start, end)] sleep periods. When given, only lines timestamped within PAD of a period
@@ -173,13 +188,7 @@ def claude_requests(root, since, until, spans=None, progress=None):
         cutoff = max(cutoff, (min(a for a, _ in spans) - PAD - timedelta(days=1)).timestamp())
         # Likewise a file whose first timestamps are over a day after the last period ended starts too late.
         starts_too_late = _utc_key(max(b for _, b in spans) + AFTER_WAKE + PAD + timedelta(days=1))
-    files = []
-    for f in glob.iglob(os.path.join(root, "**", "*.jsonl"), recursive=True):
-        try:
-            if os.path.getmtime(f) >= cutoff:
-                files.append(f)
-        except OSError:
-            continue
+    files = _recent_files(root, cutoff)
     if progress:
         progress.say(f"Scanning {len(files):,} transcript file(s) for requests (a large ~/.claude can take minutes)...")
     for n, f in enumerate(files, 1):
@@ -270,6 +279,264 @@ def mark_rewrites(reqs):
                 r["rewrite"] = r["cw"]
 
 
+# ---------- --usage: token counts per session and subagent ----------
+TOK = ("input", "output", "cache_write", "cache_read")
+_USAGE_KEYS = (("input", "input_tokens"), ("output", "output_tokens"),
+               ("cache_write", "cache_creation_input_tokens"), ("cache_read", "cache_read_input_tokens"))
+NIGHT_HOURS = (0, 7)                       # local 00:00-07:00 counts as "night"
+
+
+def project_label(folder, home=None):
+    """Claude Code names a project folder after its path with every non-alphanumeric character turned into '-'
+    (/Users/me/dev/app -> -Users-me-dev-app). Drop the home-folder part so the user name is not printed."""
+    home = home if home is not None else os.path.expanduser("~")
+    enc = re.sub(r"[^A-Za-z0-9]", "-", home)
+    if enc and folder == enc:
+        return "~"
+    if enc and folder.startswith(enc + "-"):
+        return folder[len(enc) + 1:]
+    return folder.lstrip("-") or folder
+
+
+def _agent_type(path, cache):
+    """agentType from the subagent's sibling .meta.json (only that one field is read)."""
+    meta = path[:-len(".jsonl")] + ".meta.json"
+    if meta not in cache:
+        t = None
+        try:
+            with open(meta, encoding="utf-8", errors="ignore") as fh:
+                v = json.load(fh).get("agentType")
+            if isinstance(v, str):
+                t = v[:40]
+        except (OSError, ValueError, AttributeError):
+            pass
+        cache[meta] = t
+    return cache[meta]
+
+
+def usage_requests(root, since, until, progress=None):
+    """-> [request]. One entry per API request (streamed blocks share a requestId; each usage field takes the
+    max over them). Reads only: timestamp, ids, model name, usage numbers, sidechain markers, agentType."""
+    lo, hi = _utc_key(since), _utc_key(until)
+    files = _recent_files(root, since.timestamp())
+    if progress:
+        progress.say(f"Scanning {len(files):,} transcript file(s) for token usage (a large ~/.claude can take minutes)...")
+    reqs, meta_cache = {}, {}
+    for n, f in enumerate(files, 1):
+        if progress:
+            progress.tick(f"scanned {n - 1:,}/{len(files):,} files")
+        rel = os.path.relpath(f, root).split(os.sep)
+        proj = rel[0] if len(rel) > 1 else ""
+        in_sub = "subagents" in rel[:-1]
+        path_session = rel[rel.index("subagents") - 1] if in_sub and rel.index("subagents") >= 1 \
+            else rel[-1][:-len(".jsonl")]
+        try:
+            fh = open(f, "rb")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                if b'"usage"' not in line or b"assistant" not in line:
+                    continue
+                vals = [v.decode("ascii", "replace") for v in TS_VALUE_RE.findall(line)]
+                keys = [v[:19] for v in vals if len(v) >= 20 and v[10] == "T" and v[-1] == "Z"]
+                if vals and len(keys) == len(vals) and (max(keys) < lo or min(keys) > hi):
+                    continue                     # every timestamp on the line is outside the window
+                try:
+                    d = json.loads(line.decode("utf-8", "ignore"))
+                except ValueError:
+                    continue
+                if not isinstance(d, dict) or d.get("type") != "assistant" or d.get("isApiErrorMessage"):
+                    continue
+                msg = d.get("message")
+                if not isinstance(msg, dict) or not isinstance(msg.get("usage"), dict):
+                    continue
+                model = msg.get("model")
+                if model == "<synthetic>":       # made locally by Claude Code, not an API request
+                    continue
+                try:
+                    t = iso(d.get("timestamp") or "")
+                except ValueError:
+                    continue
+                if t < since or t > until:
+                    continue
+                side = in_sub or d.get("isSidechain") is True
+                session = d.get("sessionId") if isinstance(d.get("sessionId"), str) else path_session
+                agent = None
+                if side:
+                    agent = d.get("agentId") if isinstance(d.get("agentId"), str) else \
+                        (rel[-1][:-len(".jsonl")] if in_sub else "sidechain")
+                rid = d.get("requestId") or msg.get("id") or d.get("uuid")
+                key = (f, rid) if rid else (f, len(reqs))
+                r = reqs.get(key)
+                if r is None:
+                    r = reqs[key] = {"t": t, "project": proj, "session": session, "agent": agent,
+                                     "agent_type": _agent_type(f, meta_cache) if in_sub else None,
+                                     "workflow": in_sub and "workflows" in rel[:-1],
+                                     "model": model if isinstance(model, str) else None,
+                                     "input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
+                r["t"] = min(r["t"], t)
+                u = msg["usage"]
+                for k, src in _USAGE_KEYS:
+                    v = u.get(src)
+                    if isinstance(v, int) and v > r[k]:
+                        r[k] = v
+    if progress:
+        progress.done(f"Scanned {len(files):,} file(s)")
+    return list(reqs.values())
+
+
+def _tok_total(r):
+    return sum(r[k] for k in TOK)
+
+
+def _bucket():
+    return {"requests": 0, "input": 0, "output": 0, "cache_write": 0, "cache_read": 0, "total": 0}
+
+
+def _add(b, r):
+    b["requests"] += 1
+    for k in TOK:
+        b[k] += r[k]
+    b["total"] += _tok_total(r)
+
+
+def _models(counter):
+    names = [m.replace("claude-", "", 1) for m, _ in sorted(counter.items(), key=lambda x: (-x[1], x[0])) if m]
+    if not names:
+        return "?"
+    return names[0] + (f" +{len(names) - 1}" if len(names) > 1 else "")
+
+
+def usage_report(reqs, spans=None, top=10, redact=False, home=None):
+    """Group requests by session and by subagent. spans: [(start, end)] sleep periods, or None if unknown."""
+    tot, main_b, sub_b, night_b = _bucket(), _bucket(), _bucket(), _bucket()
+    sleep_b = _bucket() if spans is not None else None
+    sp = sorted(spans or [])
+    starts = [a for a, _ in sp]
+    sessions, agents = {}, {}
+    for r in sorted(reqs, key=lambda r: r["t"]):
+        _add(tot, r)
+        _add(sub_b if r["agent"] else main_b, r)
+        if NIGHT_HOURS[0] <= r["t"].astimezone().hour < NIGHT_HOURS[1]:
+            _add(night_b, r)
+        if sleep_b is not None:
+            i = bisect.bisect_right(starts, r["t"]) - 1
+            # periods do not overlap (each ends at a Wake), but check the previous one too in case they do
+            if any(0 <= j and sp[j][0] <= r["t"] < sp[j][1] for j in (i, i - 1)):
+                _add(sleep_b, r)
+        sk = (r["project"], r["session"])
+        s = sessions.get(sk)
+        if s is None:
+            s = sessions[sk] = dict(_bucket(), project=r["project"], session=r["session"], first=r["t"], last=r["t"],
+                                    subagent_tokens=0, subagents=set(), _models=defaultdict(int))
+        _add(s, r)
+        s["last"] = r["t"]
+        s["_models"][r["model"]] += 1
+        if r["agent"]:
+            s["subagent_tokens"] += _tok_total(r)
+            s["subagents"].add(r["agent"])
+            ak = sk + (r["agent"],)
+            a = agents.get(ak)
+            if a is None:
+                a = agents[ak] = dict(_bucket(), project=r["project"], session=r["session"], agent=r["agent"],
+                                      agent_type=r["agent_type"] or ("workflow" if r["workflow"] else None),
+                                      first=r["t"], last=r["t"], _models=defaultdict(int))
+            _add(a, r)
+            a["last"] = r["t"]
+            a["_models"][r["model"]] += 1
+
+    by_tok = lambda x: (-x["total"], x["first"])
+    srows, arows = sorted(sessions.values(), key=by_tok), sorted(agents.values(), key=by_tok)
+    names = {}
+    for s in srows:                                     # project-1 = the project with the most tokens
+        names.setdefault(s["project"], f"project-{len(names) + 1}")
+    sids = {}
+
+    def label(p):
+        return names[p] if redact else project_label(p, home)
+
+    def sid(x):
+        if not redact:
+            return x[:8]
+        return sids.setdefault(x, f"s{len(sids) + 1}")
+
+    def out(x, extra):
+        o = {"project": label(x["project"]), "session": sid(x["session"]),
+             "first": x["first"].astimezone().isoformat(timespec="minutes"),
+             "last": x["last"].astimezone().isoformat(timespec="minutes"),
+             "models": _models(x["_models"])}
+        o.update({k: x[k] for k in ("requests", "total") + TOK})
+        o.update(extra)
+        return o
+
+    sess_out = [out(s, {"subagents": len(s["subagents"]), "subagent_tokens": s["subagent_tokens"]})
+                for s in srows[:top]]
+    agent_out = [out(a, {"agent": (f"a{i}" if redact else a["agent"][:12]), "agent_type": a["agent_type"]})
+                 for i, a in enumerate(arows[:top], 1)]
+    return {"totals": tot, "main_sessions": main_b, "subagents": sub_b,
+            "while_asleep": sleep_b, "night_local_00_07": night_b,
+            "sessions_in_window": len(sessions), "subagents_in_window": len(agents),
+            "top_sessions": sess_out, "top_subagents": agent_out}
+
+
+def fmt_tok(n):
+    if n < 10_000:
+        return f"{n:,}"
+    for div, suf in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
+        if n >= div:
+            return f"{n / div:.1f}{suf}"
+    return str(n)
+
+
+def print_grid(head, body, left=1):
+    """First `left` columns left-aligned, the rest right-aligned."""
+    w = [max(len(head[i]), *(len(b[i]) for b in body)) if body else len(head[i]) for i in range(len(head))]
+    line = lambda cells: "  ".join(c.ljust(w[i]) if i < left else c.rjust(w[i]) for i, c in enumerate(cells)).rstrip()
+    print(line(head))
+    print("  ".join("-" * x for x in w))
+    for b in body:
+        print(line(b))
+
+
+def print_usage(rep, days, sleep_note):
+    short = lambda s: s[5:16].replace("T", " ")          # MM-DD HH:MM
+    tok_cells = lambda x: [f"{x['requests']:,}", fmt_tok(x["total"])] + [fmt_tok(x[k]) for k in TOK]
+    tok_head = ["Requests", "Total tok", "Input", "Output", "Cache write", "Cache read"]
+    print(f"lid-check --usage: last {days:g} days. Token counts from Claude Code transcripts "
+          f"({rep['sessions_in_window']:,} session(s), {rep['subagents_in_window']:,} subagent(s)).")
+    print()
+    rows = [("All requests", rep["totals"]), ("  main sessions", rep["main_sessions"]),
+            ("  subagents", rep["subagents"])]
+    if rep["while_asleep"] is not None:
+        rows.append(("While Mac asleep", rep["while_asleep"]))
+    rows.append(("Local 00:00-07:00", rep["night_local_00_07"]))
+    print_grid([""] + tok_head, [[n] + tok_cells(b) for n, b in rows])
+    if rep["while_asleep"] is None:
+        print(f"(While Mac asleep: not shown, {sleep_note})")
+    elif sleep_note:
+        print(f"(Note: {sleep_note})")
+    if not rep["top_sessions"]:
+        print("\nNo Claude Code requests with token counts in that window.")
+        return
+    print("\nTop sessions by tokens (a session's subagents are included in its row):")
+    print_grid(["Project", "Session", "First", "Last"] + tok_head + ["Subagent tok", "Model"],
+               [[s["project"], s["session"], short(s["first"]), short(s["last"])] + tok_cells(s)
+                + [fmt_tok(s["subagent_tokens"]), s["models"]] for s in rep["top_sessions"]], left=2)
+    if rep["top_subagents"]:
+        print("\nTop subagents by tokens:")
+        print_grid(["Project", "Session", "Agent", "Type", "First", "Last"] + tok_head + ["Model"],
+                   [[a["project"], a["session"], a["agent"], a["agent_type"] or "-", short(a["first"]), short(a["last"])]
+                    + tok_cells(a) + [a["models"]] for a in rep["top_subagents"]], left=4)
+    print("\nNotes:")
+    print("- Total tok = input + output + cache write + cache read, as recorded in the transcripts. Cache reads are")
+    print("  usually most of it, so compare the columns, not only the total.")
+    print("- These are transcript numbers, not billing numbers, and no dollar estimate is made.")
+    print("- While Mac asleep = recorded inside a pmset sleep period. Local 00:00-07:00 is by clock time only;")
+    print("  the two can overlap.")
+    print("- First/Last = first and last request of that session or subagent inside the window (local time).")
+
+
 # ---------- per period ----------
 def summarize(p, reqs, errors, dw):
     a, b = p["start"], p["end"]
@@ -322,13 +589,41 @@ def print_table(rows):
         print(line(b))
 
 
+def main_usage(a, prog, ev, log_first, since, now):
+    if not os.path.isdir(a.projects_dir):
+        print(f"lid-check: Claude Code folder not found: {a.projects_dir} "
+              "(use --projects-dir if yours is elsewhere)", file=sys.stderr)
+        return 1
+    spans, note = None, ""
+    if a.no_pmset:
+        note = "--no-pmset was given"
+    elif log_first is None:
+        note = "no pmset log was readable"
+    else:
+        if log_first > since:   # the log does not reach back to the start of the window
+            note = f"the pmset log starts {log_first.astimezone().isoformat(timespec='minutes')}; " \
+                   "sleep before that is not known, so 'While Mac asleep' can be too low"
+        ps = [p for p in sleep_periods(ev, now) if p["end"] > since]
+        spans = [(p["start"], p["end"]) for p in ps if (p["end"] - p["start"]) >= timedelta(minutes=a.min_minutes)]
+    reqs = usage_requests(a.projects_dir, since, now, prog)
+    rep = usage_report(reqs, spans, top=a.top, redact=a.redact)
+    if a.json:
+        rep["meta"] = {"days": a.days, "sleep_periods": len(spans) if spans is not None else None,
+                       "sleep_note": note or None}
+        print(json.dumps(rep, indent=1))
+        return 0
+    print_usage(rep, a.days, note)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="List the times your Mac was asleep (from `pmset -g log`) and count the Claude Code requests "
                     "recorded inside them (from ~/.claude/projects). Read-only: no network, no files written.",
         epilog="examples:\n  python3 lid_check.py                      last 7 days\n"
                "  python3 lid_check.py --days 14 --lid-only only sleeps that began with a lid close\n"
-               "  python3 lid_check.py --json                same numbers as JSON",
+               "  python3 lid_check.py --json                same numbers as JSON\n"
+               "  python3 lid_check.py --usage --days 3     tokens per session and subagent, last 3 days",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=float, default=7, help="how many days back to look (default 7)")
     ap.add_argument("--min-minutes", type=float, default=5, help="ignore sleep periods shorter than this (default 5)")
@@ -338,17 +633,27 @@ def main(argv=None):
                     help="Claude Code transcript folder (default ~/.claude/projects)")
     ap.add_argument("-q", "--quiet", action="store_true", help="no progress messages on stderr")
     ap.add_argument("--pmset-log", help="read this saved `pmset -g log` text file instead of running pmset")
+    g = ap.add_argument_group("token usage (--usage)")
+    g.add_argument("--usage", action="store_true",
+                   help="token counts per session and subagent instead of the sleep table (shows project folder names)")
+    g.add_argument("--top", type=int, default=10, help="rows in each --usage table (default 10)")
+    g.add_argument("--redact", action="store_true", help="--usage: print project-1, s1, a1 instead of names and ids")
+    g.add_argument("--no-pmset", action="store_true", help="--usage: skip the pmset log (no 'While Mac asleep' row)")
     a = ap.parse_args(argv)
     if not a.days > 0:
         ap.error("--days must be greater than 0 (for example --days 7)")
     if a.min_minutes < 0:
         ap.error("--min-minutes must be 0 or more")
+    if a.top < 1:
+        ap.error("--top must be 1 or more")
 
     prog = Progress(a.quiet)
     now = datetime.now(UTC)
     since = now - timedelta(days=a.days)
 
-    if a.pmset_log:
+    if a.usage and a.no_pmset:
+        text = ""
+    elif a.pmset_log:
         try:
             with open(a.pmset_log, errors="ignore") as fh:
                 text = fh.read()
@@ -360,6 +665,8 @@ def main(argv=None):
         text = run(["pmset", "-g", "log"])
         prog.done("Read the pmset log")
     ev, log_first = parse_power_events(text)
+    if a.usage:
+        return main_usage(a, prog, ev, log_first, since, now)
     if log_first is None:
         print("lid-check: no pmset log lines found. `pmset -g log` printed nothing readable "
               "(this tool needs macOS). To use a saved copy: pmset -g log > pm.txt; "

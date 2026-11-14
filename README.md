@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/whereisdw/lid-check/main/lid_check.
 curl -fsSL https://raw.githubusercontent.com/whereisdw/lid-check/main/lid_check.py | python3 - --days 14 --lid-only
 ```
 
-Options: `--days N` (default 7), `--lid-only`, `--min-minutes N` (ignore short sleeps, default 5), `--json`, `--projects-dir DIR` (default `~/.claude/projects`), `--pmset-log FILE`, `--quiet` (no progress messages; they go to stderr, so the table and `--json` on stdout are unchanged).
+Options: `--days N` (default 7), `--lid-only`, `--min-minutes N` (ignore short sleeps, default 5), `--json`, `--projects-dir DIR` (default `~/.claude/projects`), `--pmset-log FILE`, `--usage` (see below), `--quiet` (no progress messages; they go to stderr, so the table and `--json` on stdout are unchanged).
 Works with the python3 that ships with macOS (tests pass on 3.9 and 3.15). Bad input (a missing folder or file, `--days 0`) prints one line saying what is wrong.
 
 Timing, measured once on one busy Mac with a 14 GB `~/.claude/projects` (about 7,700 transcript files, many with multi-MB lines), against a test pmset log with a nightly 8-hour sleep: the transcript scan took 20-30 s for `--days 7` and about 30 s for `--days 30`, down from about 1 to 2 minutes in the first version (run times on that machine varied by a factor of two between runs). With a single sleep period 3 days ago it took about 10 s. Separately, `pmset -g log` alone took 8 s once here and about a minute at another time; macOS builds that log on demand and this tool cannot speed it up. So the first line it prints, on stderr, says it is reading the pmset log. These are single runs on one machine, not benchmarks; a smaller folder is much faster. With no sleep period in the window the transcripts are not read at all. Progress goes to stderr (`--quiet` turns it off), so the table and `--json` on stdout are unchanged. Use `--projects-dir` on a copy of one project to try it quickly.
@@ -83,6 +83,51 @@ What it does not tell you:
 
 If it prints "No sleep periods found", the log has no Sleep events in that window.
 
+## Where did the tokens go? (`--usage`)
+
+`--usage` adds up the token counts Claude Code writes into its transcripts and shows which sessions and which subagents used the most, plus how much was recorded while the Mac was asleep (from the same `pmset` log) or between 00:00 and 07:00 local time.
+
+```sh
+python3 lid_check.py --usage              # last 7 days
+python3 lid_check.py --usage --days 1 --top 20
+python3 lid_check.py --usage --redact     # project-1, s1, a1 instead of names and ids
+```
+
+Example (**synthetic** transcripts and pmset lines, the same ones the tests use; numbers are made up):
+
+```text
+lid-check --usage: last 3650 days. Token counts from Claude Code transcripts (2 session(s), 3 subagent(s)).
+
+                   Requests  Total tok  Input  Output  Cache write  Cache read
+-----------------  --------  ---------  -----  ------  -----------  ----------
+All requests              8     328.8k     22   1,185        6,000      321.6k
+  main sessions           3      21.2k     11     151        1,000       20.0k
+  subagents               5     307.6k     11   1,034        5,000      301.6k
+While Mac asleep          3     326.2k      5   1,120        5,000      320.1k
+Local 00:00-07:00         2     306.1k      4   1,020        5,000      300.1k
+(Note: the pmset log starts 2026-11-10T22:00+09:00; sleep before that is not known, so 'While Mac asleep' can be too low)
+
+Top sessions by tokens (a session's subagents are included in its row):
+Project     Session         First         Last  Requests  Total tok  Input  Output  Cache write  Cache read  Subagent tok         Model
+----------  --------  -----------  -----------  --------  ---------  -----  ------  -----------  ----------  ------------  ------------
+dev-webapp  11111111  11-10 21:00  11-11 08:31         7     328.8k     22   1,184        6,000      321.6k        307.6k  opus-test +1
+dev-api     99999999  11-10 21:30  11-10 21:30         1         11      0       1            0          10             0     opus-test
+
+Top subagents by tokens:
+Project     Session   Agent      Type                   First         Last  Requests  Total tok  Input  Output  Cache write  Cache read        Model
+----------  --------  ---------  ---------------  -----------  -----------  --------  ---------  -----  ------  -----------  ----------  -----------
+dev-webapp  11111111  aaa111     general-purpose  11-11 00:00  11-11 08:31         3     307.0k      9   1,011        5,000      301.0k  sonnet-test
+dev-webapp  11111111  sidechain  -                11-11 08:00  11-11 08:00         1        505      2       3            0         500    opus-test
+dev-webapp  11111111  bbb222     workflow         11-11 01:00  11-11 01:00         1        120      0      20            0         100    opus-test
+```
+
+- Requests are counted once per API request id (Claude Code writes one line per streamed block). Lines marked `<synthetic>` or as API errors are not counted.
+- Subagents are found from `subagents/` transcript paths and the `isSidechain` / `agentId` fields; Type comes from the subagent's `.meta.json` (`agentType` only), or `workflow` for workflow agents without one.
+- Project is the transcript folder name with your home-folder part removed. Session and Agent are the first characters of their ids.
+- Tokens only. There is no dollar estimate: prices and how usage limits weigh each token type change, and transcript numbers are not billing numbers.
+- "While Mac asleep" needs the `pmset` log to cover the window; if it starts later, a note says so. `--no-pmset` skips it. `--json` prints the same numbers.
+- On the 14 GB folder described above, `--usage --days 7` (about 3,000 recently modified files) took about 25 s plus the `pmset` read; `--days 1` took about 6 s. Single runs, not benchmarks.
+
 ## Free ways to keep the Mac awake
 
 From `man caffeinate`:
@@ -98,9 +143,10 @@ The man page does not say whether these cover closing the lid. Run `lid_check.py
 
 - Runs `pmset -g log` (read-only). `--pmset-log FILE` reads a saved copy of that output instead.
 - Reads `~/.claude/projects/**/*.jsonl` for only: the timestamp, the request id, the cache token counts, and whether an entry is an API error.
-- Does not print or store conversation text, project names, file names, or paths.
+- Does not print or store conversation text, file names, or paths. Project folder names (home-folder part removed) are printed only by `--usage`, and `--redact` hides them.
+- With `--usage` it also reads the model name and input/output token counts, and `agentType` from subagent `.meta.json` files.
 - No network calls, no files written, no settings changed, no dependencies. `--json` prints the same numbers.
-- You can verify this: the file is about 420 lines, and `grep -n "import" lid_check.py` shows the only modules it uses.
+- You can verify this: the file is about 730 lines, and `grep -n "import" lid_check.py` shows the only modules it uses.
 
 Tests: `python3 -m unittest discover -s tests`
 
