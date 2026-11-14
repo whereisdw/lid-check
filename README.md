@@ -154,4 +154,4 @@ Tests: `python3 -m unittest discover -s tests`
 
 MIT, see `LICENSE`.
 
-Made by whereisdw, who also makes [Lidnight](https://lidnight.app/), a Mac app that keeps a MacBook awake with the lid closed while AI coding agents run (free tier, paid Pro for lid-closed mode). lid-check is separate and does not need it.
+Made by whereisdw, who also makes [Lidnight](https://lidnight.app/?from=lid-check), a Mac app that keeps a MacBook awake with the lid closed while AI coding agents run (free tier, paid Pro for lid-closed mode). lid-check is separate and does not need it.
