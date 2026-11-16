@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/whereisdw/lid-check/main/lid_check.
 curl -fsSL https://raw.githubusercontent.com/whereisdw/lid-check/main/lid_check.py | python3 - --days 14 --lid-only
 ```
 
-Options: `--days N` (default 7), `--lid-only`, `--min-minutes N` (ignore short sleeps, default 5), `--json`, `--projects-dir DIR` (default `~/.claude/projects`), `--pmset-log FILE`, `--usage` (see below), `--quiet` (no progress messages; they go to stderr, so the table and `--json` on stdout are unchanged).
+Options: `--days N` (default 7), `--lid-only`, `--min-minutes N` (ignore short sleeps, default 5), `--json`, `--projects-dir DIR` (default `~/.claude/projects`), `--pmset-log FILE`, `--usage` and `--away` (see below), `--quiet` (no progress messages; they go to stderr, so the table and `--json` on stdout are unchanged).
 Works with the python3 that ships with macOS (tests pass on 3.9 and 3.15). Bad input (a missing folder or file, `--days 0`) prints one line saying what is wrong.
 
 Timing, measured once on one busy Mac with a 14 GB `~/.claude/projects` (about 7,700 transcript files, many with multi-MB lines), against a test pmset log with a nightly 8-hour sleep: the transcript scan took 20-30 s for `--days 7` and about 30 s for `--days 30`, down from about 1 to 2 minutes in the first version (run times on that machine varied by a factor of two between runs). With a single sleep period 3 days ago it took about 10 s. Separately, `pmset -g log` alone took 8 s once here and about a minute at another time; macOS builds that log on demand and this tool cannot speed it up. So the first line it prints, on stderr, says it is reading the pmset log. These are single runs on one machine, not benchmarks; a smaller folder is much faster. With no sleep period in the window the transcripts are not read at all. Progress goes to stderr (`--quiet` turns it off), so the table and `--json` on stdout are unchanged. Use `--projects-dir` on a copy of one project to try it quickly.
@@ -128,6 +128,64 @@ dev-webapp  11111111  bbb222     workflow         11-11 01:00  11-11 01:00      
 - "While Mac asleep" needs the `pmset` log to cover the window; if it starts later, a note says so. `--no-pmset` skips it. `--json` prints the same numbers.
 - On the 14 GB folder described above, `--usage --days 7` (about 3,000 recently modified files) took about 25 s plus the `pmset` read; `--days 1` took about 6 s. Single runs, not benchmarks.
 
+## What ran while you were away? (`--away`)
+
+`--away` looks at the last 24 hours of Claude Code transcripts and Codex session files and finds the stretches of 60+ minutes in which you typed nothing into either tool. For those stretches it shows:
+
+- which sessions still made requests (session id prefix, first and last time, requests, subagent requests, tokens),
+- any session that started again after a usage limit with nothing typed in between, when, what sent the prompt (Claude Code's own auto-continue, a scheduled task, another session, Lidnight's resume message, or nothing recorded), and how many tokens it used until you next typed,
+- for Codex, the 5-hour limit percentage Codex recorded before and during the stretch.
+
+```sh
+python3 lid_check.py --away                       # last 24 h, away = 60+ min with no typed prompt
+python3 lid_check.py --away --hours 72 --idle 30
+python3 lid_check.py --away --json
+```
+
+It does not need `pmset`, so it also runs on Linux (not tested there). It prints session-id prefixes, times and numbers only: no prompt text, no project names, no paths.
+
+How it decides:
+
+- **Typed prompt.** Claude Code marks a prompt you sent with `origin: {"kind": "human"}`; prompts from scheduled tasks, other sessions, subagents and `claude -p` are not typed. Older transcripts without that field count a plain prompt as typed. In Codex a prompt in an interactive session counts as typed and a `codex exec` prompt does not, so a Codex app automation can end a stretch early.
+- **Started again after a limit.** A Claude Code limit message (`rate_limit` error) or a Codex usage-limit error, followed 5+ minutes later by a request in the same session with no typed prompt in between. "At reset" compares the restart with the reset time named in the Claude Code message (`resets 3am (Asia/Seoul)`) or recorded by Codex; it says `unknown` when there is none.
+- **Prompts not typed.** Per session, the prompts inside the stretches that did not come from you, by kind: task notice, scheduled, other session, auto-continue, `claude -p`, `exec`, Lidnight. Each one can start new turns while you are away.
+- **Tokens.** Claude Code: input + output + cache write + cache read per request id. Codex: the growth of its own running total. These are transcript numbers, not a bill. A dollar figure and the Claude limit percentage are not in these files, so the output says `unknown`.
+
+On the busy Mac described above, `--away` (about 300 Claude Code files and 14 Codex files written in the last 48 h) took 15 s once and 38 s on a first, cold run. Single runs, not benchmarks.
+
+Example (**synthetic** files from `tests/test_away.py`, numbers are made up; run with `TZ=UTC` and a fixed time):
+
+```text
+lid-check --away: last 24 h. An away stretch = 60+ minutes with no prompt typed into Claude Code or Codex.
+Looked at: Claude Code 4 session(s); Codex 2 session(s) (files written in the last 48 h). Session ids are cut to 8 characters.
+
+While you were away: 6 session(s) made 14 request(s), 37.5k tokens, across 4 stretch(es) (13h00m).
+
+Away from          Until  Length  Sessions  Requests  Tokens  Codex 5h limit
+-----------  -----------  ------  --------  --------  ------  --------------
+11-10 19:00  11-10 20:00   1h00m         1         1   1,030         unknown
+11-10 21:00  11-10 23:10   2h10m         1         1   1,030         unknown
+11-10 23:10  11-11 08:00   8h50m         5        11   34.5k         unknown
+11-11 08:00          now   1h00m         1         1   1,030         unknown
+
+Sessions that made requests while you were away:
+Tool    Mode         Session         First         Last  Requests  Subagent  Tokens  Prompts not typed
+------  -----------  --------  -----------  -----------  --------  --------  ------  ------------------------------
+Claude  interactive  aaaaaaaa  11-10 21:00  11-11 08:00         7         1   30.2k  1 auto-continue, 1 task notice
+Codex   interactive  019a0000  11-11 02:00  11-11 05:00         2         0   2,500  1 Lidnight
+Claude  headless     cccccccc  11-11 04:00  11-11 04:01         2         0   2,060  1 claude -p
+Claude  interactive  dddddddd  11-10 19:00  11-10 19:00         1         0   1,030  -
+Claude  interactive  bbbbbbbb  11-10 23:10  11-10 23:10         1         0   1,030  -
+Codex   headless     019b0000  11-11 01:31  11-11 01:31         1         0     700  1 exec
+
+Started again after a usage limit, with nothing typed in between: 2
+Tool    Session     Limit hit        Reset  Started again  At reset?  Trigger                    Requests  Tokens
+------  --------  -----------  -----------  -------------  ---------  -------------------------  --------  ------
+Claude  aaaaaaaa  11-11 01:00  11-11 03:00    11-11 03:00        yes  Claude Code auto-continue         2   21.1k
+Codex   019a0000  11-11 04:00  11-11 05:00    11-11 05:00        yes  Lidnight resume message           1     500
+Requests/Tokens = from that restart until you next typed in that session (or the next limit, or now).
+```
+
 ## Free ways to keep the Mac awake
 
 From `man caffeinate`:
@@ -145,8 +203,9 @@ The man page does not say whether these cover closing the lid. Run `lid_check.py
 - Reads `~/.claude/projects/**/*.jsonl` for only: the timestamp, the request id, the cache token counts, and whether an entry is an API error.
 - Does not print or store conversation text, file names, or paths. Project folder names (home-folder part removed) are printed only by `--usage`, and `--redact` hides them.
 - With `--usage` it also reads the model name and input/output token counts, and `agentType` from subagent `.meta.json` files.
+- With `--away` it also reads `~/.codex/sessions/**/*.jsonl` (session id and source, timestamps, token totals, limit percentages and errors) and, without printing it, the start of a prompt or limit message, to tell an auto-continue or a reset time apart.
 - No network calls, no files written, no settings changed, no dependencies. `--json` prints the same numbers.
-- You can verify this: the file is about 730 lines, and `grep -n "import" lid_check.py` shows the only modules it uses.
+- You can verify this: the file is about 1,200 lines, and `grep -n "import" lid_check.py` shows the only modules it uses.
 
 Tests: `python3 -m unittest discover -s tests`
 
