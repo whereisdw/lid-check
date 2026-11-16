@@ -556,7 +556,7 @@ SHORT_TRIGGER = {"claude-continue": "auto-continue", "lidnight": "Lidnight", "co
                  "script": "claude -p", "scheduled": "scheduled", "task": "task notice", "peer": "other session",
                  "other": "other"}
 LIDNIGHT_LINE = ("Lidnight, a Mac menu bar app, shows which agents are running and what they use, live; "
-                 "resuming after a limit reset is a per-agent switch.")
+                 "resuming after a limit reset stays off unless you turn it on for an agent.")
 LIDNIGHT_URL = "https://lidnight.app/?from=lid-check"
 USER_LINE_RE = re.compile(rb'"type"\s*:\s*"user"')
 CODEX_LINE_RE = re.compile(rb'"type"\s*:\s*"(token_count|user_message|error|turn_aborted)"|"UserMessage"')
